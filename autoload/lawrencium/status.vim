@@ -35,6 +35,50 @@ function! s:do_read_status(repo, path_parts, full_path, opt, opt_val) abort
     setlocal buftype=nofile
 endfunction
 
+function! lawrencium#status#RefreshIfOpen(repo_root) abort
+    let l:repo = lawrencium#hg_repo(a:repo_root)
+    let l:status_path = l:repo.GetLawrenciumPath('', 'status', '')
+
+    let l:mytab = tabpagenr()
+    for l:tabnr in range(1, tabpagenr('$'))
+        let l:winnr = 1
+        for l:bnr in tabpagebuflist(l:tabnr)
+            if getbufvar(l:bnr, 'lawrencium_path') ==# l:status_path
+                execute 'tabnext ' . l:tabnr
+                let l:cur_win = winnr()
+                execute l:winnr . "wincmd w"
+                call lawrencium#status#HgStatusRefresh()
+                if winnr() != l:cur_win
+                    execute l:cur_win . "wincmd w"
+                endif
+                execute 'tabnext ' . l:mytab
+                return
+            endif
+            let l:winnr += 1
+        endfor
+    endfor
+endfunction
+
+function! lawrencium#status#RefreshAllOpen() abort
+    let l:mytab = tabpagenr()
+    for l:tabnr in range(1, tabpagenr('$'))
+        let l:winnr = 1
+        for l:bnr in tabpagebuflist(l:tabnr)
+            if getbufvar(l:bnr, 'lawrencium_status_type') isnot# ''
+                execute 'tabnext ' . l:tabnr
+                let l:cur_win = winnr()
+                execute l:winnr . "wincmd w"
+                call lawrencium#status#HgStatusRefresh()
+                if winnr() != l:cur_win
+                    execute l:cur_win . "wincmd w"
+                endif
+                execute 'tabnext ' . l:mytab
+            endif
+            let l:winnr += 1
+        endfor
+    endfor
+endfunction
+
 function! lawrencium#status#HgStatus(status_type, status_param) abort
     " Get the repo and the Lawrencium path for `hg status`.
     let l:repo = lawrencium#hg_repo()
@@ -137,20 +181,13 @@ function! lawrencium#status#HgStatusRefresh(...) abort
             call lawrencium#throwerr("Can't find the status window anymore!")
         endif
         execute l:win_nr . 'wincmd w'
-        " Delete everything in the buffer, and re-read the status into it.
-        " TODO: In theory I would only have to do `edit` like below when we're
-        " already in the window, but for some reason Vim just goes bonkers and
-        " weird shit happens. I have no idea why, hence the work-around here
-        " to bypass the whole `BufReadCmd` auto-command altogether, and just
-        " edit the buffer in place.
-        normal! ggVGd
-        call lawrencium#read_lawrencium_file(b:lawrencium_path)
-        return
     endif
 
-    " Just re-edit the buffer, it will reload the contents by calling
-    " the matching Mercurial command.
-    edit
+    " Delete everything in the buffer, and re-read the status into it.
+    " This bypasses the whole `BufReadCmd` auto-command which can be flaky
+    " when triggered via `edit` from certain contexts.
+    normal! ggVGd
+    call lawrencium#read_lawrencium_file(b:lawrencium_path)
 
     " The window might have been resize if something happened (like, say, we
     " opened a commit message window, and closed it).

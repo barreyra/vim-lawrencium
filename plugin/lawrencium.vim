@@ -79,5 +79,39 @@ augroup lawrencium_files
     autocmd BufWriteCmd lawrencium://**//**//* exe lawrencium#write_lawrencium_file(expand('<amatch>'))
 augroup END
 
+augroup lawrencium_auto_refresh
+    autocmd!
+    autocmd BufWritePost * call s:AutoRefreshStatus()
+    autocmd ShellCmdPost * call s:AutoRefreshAll()
+    autocmd User HgCmdPost call s:AutoRefreshStatus()
+    autocmd FocusGained  * call s:AutoRefreshAll()
+augroup end
+
+function! s:AutoRefreshStatus()
+    let l:repo_root = ''
+    if exists('b:mercurial_dir') && b:mercurial_dir != ''
+        let l:repo_root = b:mercurial_dir
+    else
+        try
+            let l:repo = lawrencium#hg_repo()
+            let l:repo_root = l:repo.root_dir
+        catch
+        endtry
+    endif
+
+    if l:repo_root != ''
+        " Defer the refresh using a timer to ensure we are out of the immediate
+        " autocmd context. This prevents issues like the status window going blank
+        " when it is refreshed while another buffer is being written or processed.
+        let l:deferred_root = l:repo_root
+        call timer_start(0, {-> lawrencium#status#RefreshIfOpen(l:deferred_root)})
+    endif
+endfunction
+
+function! s:AutoRefreshAll()
+    " Refresh all open status windows across all tabs when a global event occurs.
+    call timer_start(0, {-> lawrencium#status#RefreshAllOpen()})
+endfunction
+
 " }}}
 

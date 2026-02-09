@@ -14,7 +14,6 @@ function! lawrencium#hg#Hg(bang, ...) abort
     if g:lawrencium_auto_cd
         execute 'cd! -'
     endif
-    silent doautocmd User HgCmdPost
     if a:bang
         " Open the output of the command in a temp file.
         let l:temp_file = lawrencium#tempname('hg-output-', '.txt')

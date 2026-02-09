@@ -349,6 +349,7 @@ function! s:HgRepo.RunCommandEx(plain_mode, command, ...) abort
             unlet $HGPLAIN
         endif
     endif
+    silent execute 'doautocmd <nomodeline> User HgCmdPost'
     return l:cmd_out
 endfunction
 
