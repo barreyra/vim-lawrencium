@@ -46,6 +46,14 @@ function! lawrencium#status#HgStatus(status_type, status_param) abort
         call lawrencium#throwerr("Invalid status type: " . string(a:status_type))
     endif
 
+    " Check if the status window is already open.
+    let l:win_nr = lawrencium#find_buffer_window('lawrencium_path', l:status_path)
+    if l:win_nr != -1
+        call win_gotoid(win_getid(l:win_nr))
+        call lawrencium#status#HgStatusRefresh()
+        return
+    endif
+
     " Open the Lawrencium buffer in a new split window of the right size.
     if g:lawrencium_status_win_split_above
         execute "keepalt leftabove split " . fnameescape(l:status_path)
