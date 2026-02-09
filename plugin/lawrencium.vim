@@ -57,6 +57,14 @@ if !exists('g:lawrencium_record_start_in_working_buffer')
     let g:lawrencium_record_start_in_working_buffer = 0
 endif
 
+if !exists('g:lawrencium_status_show_log')
+    let g:lawrencium_status_show_log = 0
+endif
+
+if !exists('g:lawrencium_status_log_revset')
+    let g:lawrencium_status_log_revset = ''
+endif
+
 if !exists('g:lawrencium_extensions')
     let g:lawrencium_extensions = []
 endif

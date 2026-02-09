@@ -7,6 +7,8 @@ function! lawrencium#status#init() abort
     call lawrencium#add_reader('changestatus', "lawrencium#status#read_change", 1)
 endfunction
 
+let s:log_style_file = expand("<sfile>:h:h:h") . "/resources/hg_log.style"
+
 function! lawrencium#status#read(repo, path_parts, full_path) abort
     call s:do_read_status(a:repo, a:path_parts, a:full_path, '', '')
 endfunction
@@ -16,17 +18,40 @@ function! lawrencium#status#read_change(repo, path_parts, full_path) abort
 endfunction
 
 function! s:do_read_status(repo, path_parts, full_path, opt, opt_val) abort
-    if a:path_parts['path'] == ''
-        if a:opt == ''
-            call a:repo.ReadCommandOutput('status')
-        else
-            call a:repo.ReadCommandOutput('status', a:opt, a:opt_val)
+    let l:is_main_status = (a:path_parts['path'] == '' && a:opt == '')
+    if l:is_main_status && g:lawrencium_status_show_log
+        " Read status.
+        call a:repo.ReadCommandOutput('status')
+        let l:has_status = (line('$') > 1 || getline(1) != '')
+
+        if l:has_status
+            call append(0, ['Changed files:', '--------------'])
+        endif
+
+        " Read log.
+        let l:revset = g:lawrencium_status_log_revset
+        if l:revset == ''
+            let l:revset = 'outgoing()'
+        endif
+
+        let l:log_out = s:RunCommandNoHook(a:repo, 'log', '-r', l:revset, '--style', s:log_style_file)
+        if l:log_out != ''
+            let l:log_lines = split(l:log_out, "\n")
+            call append(line('$'), ['', 'Commits since upstream:', '-----------------------'] + l:log_lines)
         endif
     else
-        if a:opt == ''
-            call a:repo.ReadCommandOutput('status', a:full_path)
+        if a:path_parts['path'] == ''
+            if a:opt == ''
+                call a:repo.ReadCommandOutput('status')
+            else
+                call a:repo.ReadCommandOutput('status', a:opt, a:opt_val)
+            endif
         else
-            call a:repo.ReadCommandOutput('status', a:opt, a:opt_val, a:full_path)
+            if a:opt == ''
+                call a:repo.ReadCommandOutput('status', a:full_path)
+            else
+                call a:repo.ReadCommandOutput('status', a:opt, a:opt_val, a:full_path)
+            endif
         endif
     endif
     setlocal nomodified
@@ -138,6 +163,8 @@ function! lawrencium#status#HgStatus(status_type, status_param) abort
     command! -buffer          Hgstatusvdiffsum      :call s:HgStatus_DiffSummary(2)
     command! -buffer          Hgstatustabdiffsum    :call s:HgStatus_DiffSummary(3)
     command! -buffer          Hgstatusrefresh       :call s:HgStatus_Refresh()
+    command! -buffer          Hgstatusopen          :call s:HgStatus_Open()
+    command! -buffer          Hgstatusinlinediff    :call s:HgStatus_ToggleInlineDiff()
     if a:status_type == 0
         command! -buffer          Hgstatusedit          :call s:HgStatus_FileEdit(0)
         command! -buffer -range -bang Hgstatusrevert    :call s:HgStatus_Revert(<line1>, <line2>, <bang>0)
@@ -307,10 +334,18 @@ function! s:HgStatus_Commit(linestart, lineend, bang, vertical) abort
 endfunction
 
 function! s:HgStatus_Diff(split) abort
+    let l:rev = s:HgStatus_GetSelectedRev()
+    if l:rev != ''
+        " For a commit, we just show the diff summary because showing a full
+        " diff of all files in a single buffer is not well supported by HgDiff.
+        call s:HgStatus_DiffSummary(a:split)
+        return
+    endif
+
     " Open the file and run `Hgdiff` on it.
     " We also need to translate the split mode for it... if we already
-    " opened the file in a new tab, `HgDiff` only needs to do a vertical
-    " split (i.e. split=1).
+    opened the file in a new tab, `HgDiff` only needs to do a vertical
+    split (i.e. split=1).
     let l:newtab = 0
     let l:hgdiffsplit = a:split
     if a:split == 2
@@ -333,19 +368,26 @@ function! s:HgStatus_Diff(split) abort
 endfunction
 
 function! s:HgStatus_DiffSummary(split) abort
-    " Get the path of the file the cursor is on.
+    let l:rev = s:HgStatus_GetSelectedRev()
     let l:path = s:HgStatus_GetSelectedFile()
+
     " Reuse the same diff summary window
     let l:reuse_id = 'lawrencium_diffsum_for_' . bufnr('%')
     let l:split_prev_win = (a:split < 3)
     let l:args = {'reuse_id': l:reuse_id, 'use_prev_win': l:split_prev_win,
                 \'avoid_win': winnr(), 'split_mode': a:split}
-    if b:lawrencium_status_type == 0
-        call lawrencium#diff#HgDiffSummary(l:path, l:args)
-    elseif b:lawrencium_status_type == 1
-        let l:rev1 = 'p1('.b:lawrencium_status_param.')'
-        let l:rev2 = b:lawrencium_status_param
-        call lawrencium#diff#HgDiffSummary(l:path, l:args, l:rev1, l:rev2)
+
+    if l:rev != ''
+        let l:revs = ['p1(' . l:rev . ')', l:rev]
+        call lawrencium#diff#HgDiffSummary('', l:args, l:revs)
+    elseif l:path != ''
+        if b:lawrencium_status_type == 0
+            call lawrencium#diff#HgDiffSummary(l:path, l:args)
+        elseif b:lawrencium_status_type == 1
+            let l:rev1 = 'p1('.b:lawrencium_status_param.')'
+            let l:rev2 = b:lawrencium_status_param
+            call lawrencium#diff#HgDiffSummary(l:path, l:args, l:rev1, l:rev2)
+        endif
     endif
 endfunction
 
@@ -389,9 +431,28 @@ function! s:HgStatus_QRefresh(linestart, lineend) abort
 endfunction
 
 
+function! s:HgStatus_Open() abort
+    let l:rev = s:HgStatus_GetSelectedRev()
+    if l:rev != ''
+        call s:HgStatus_DiffSummary(3)
+        return
+    endif
+
+    let l:file = s:HgStatus_GetSelectedFile()
+    if l:file != ''
+        call s:HgStatus_FileEdit(0)
+    endif
+endfunction
+
+function! s:HgStatus_GetSelectedRev() abort
+    let l:line = getline('.')
+    let l:rev = matchstr(l:line, '\v^\d+')
+    return l:rev
+endfunction
+
 function! s:HgStatus_GetSelectedFile() abort
     let l:filenames = s:HgStatus_GetSelectedFiles()
-    return l:filenames[0]
+    return len(l:filenames) > 0 ? l:filenames[0] : ''
 endfunction
 
 function! s:HgStatus_GetSelectedFiles(...) abort
@@ -413,8 +474,10 @@ function! s:HgStatus_GetSelectedFiles(...) abort
         " Yay, awesome, Vim's regex syntax is fucked up like shit, especially for
         " look-aheads and look-behinds. See for yourself:
         let l:filename = matchstr(l:line, '\v(^[MARC\!\?I ]\s)@<=.*')
-        let l:filename = l:repo.GetFullPath(l:filename)
-        call add(l:filenames, l:filename)
+        if l:filename != ''
+            let l:filename = l:repo.GetFullPath(l:filename)
+            call add(l:filenames, l:filename)
+        endif
     endfor
     return l:filenames
 endfunction
@@ -422,5 +485,66 @@ endfunction
 function! s:HgStatus_GetFileStatus(...) abort
     let l:line = a:0 ? a:1 : getline('.')
     return matchstr(l:line, '\v^[MARC\!\?I ]')
+endfunction
+
+function! s:RunCommandNoHook(repo, command, ...) abort
+    let l:envvars = environ()
+    let $HGPLAIN = 'true'
+    let l:all_args = [a:command] + a:000
+    let l:hg_command = call(a:repo['GetCommand'], l:all_args, a:repo)
+    let l:cmd_out = system(l:hg_command)
+    if has_key(l:envvars, "HGPLAIN")
+        let $HGPLAIN = l:envvars["HGPLAIN"]
+    else
+        unlet $HGPLAIN
+    endif
+    return l:cmd_out
+endfunction
+
+function! s:HgStatus_ToggleInlineDiff() abort
+    let l:line = line('.')
+    let l:next_line = getline(l:line + 1)
+
+    " If the next line is the start of an inline diff, remove it.
+    if l:next_line =~# '^diff ' || l:next_line =~# '^@@ '
+        let l:end = l:line + 1
+        while l:end <= line('$') && (getline(l:end) =~# '^[ +\\@-]' || getline(l:end) =~# '^diff ')
+            if getline(l:end) =~# '^diff ' && l:end > l:line + 1
+                break
+            endif
+            let l:end += 1
+        endwhile
+        execute (l:line + 1) . ',' . (l:end - 1) . 'delete _'
+        return
+    endif
+
+    let l:rev = s:HgStatus_GetSelectedRev()
+    let l:path = s:HgStatus_GetSelectedFile()
+    let l:repo = lawrencium#hg_repo()
+    let l:diff_out = ''
+
+    if l:rev != ''
+        let l:diff_out = s:RunCommandNoHook(l:repo, 'diff', '-c', l:rev)
+    elseif l:path != ''
+        if b:lawrencium_status_type == 0
+            let l:diff_out = s:RunCommandNoHook(l:repo, 'diff', l:path)
+        elseif b:lawrencium_status_type == 1
+            let l:rev1 = 'p1('.b:lawrencium_status_param.')'
+            let l:rev2 = b:lawrencium_status_param
+            let l:diff_out = s:RunCommandNoHook(l:repo, 'diff', '-r', l:rev1, '-r', l:rev2, l:path)
+        endif
+    endif
+
+    if l:diff_out != ''
+        let l:lines = split(l:diff_out, "\n")
+        " Remove the first 3 lines (diff header)
+        if len(l:lines) >= 3
+            let l:lines = l:lines[3:]
+        endif
+
+        if len(l:lines) > 0
+            call append(l:line, l:lines)
+        endif
+    endif
 endfunction
 
