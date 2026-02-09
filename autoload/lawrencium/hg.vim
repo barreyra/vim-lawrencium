@@ -10,12 +10,9 @@ function! lawrencium#hg#Hg(bang, ...) abort
         " to make auto-completed paths work magically.
         execute 'cd! ' . fnameescape(l:repo.root_dir)
     endif
-    let l:output = call(l:repo.RunCommandEx, [0] + a:000, l:repo)
-    if g:lawrencium_auto_cd
-        execute 'cd! -'
-    endif
-    silent doautocmd User HgCmdPost
+
     if a:bang
+        let l:output = call(l:repo.RunCommandEx, [0] + a:000, l:repo)
         " Open the output of the command in a temp file.
         let l:temp_file = lawrencium#tempname('hg-output-', '.txt')
         split
@@ -36,8 +33,14 @@ function! lawrencium#hg#Hg(bang, ...) abort
             endif
         endif
     else
-        " Just print out the output of the command.
-        echo l:output
+        " Interactive execution
+        let l:hg_command = call(l:repo.GetCommand, a:000, l:repo)
+        call lawrencium#trace("Running interactive Mercurial command: " . l:hg_command)
+        execute '!' . l:hg_command
+    endif
+
+    if g:lawrencium_auto_cd
+      execute 'cd! -'
     endif
 endfunction
 
