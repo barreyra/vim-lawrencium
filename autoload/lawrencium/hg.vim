@@ -32,15 +32,52 @@ function! lawrencium#hg#Hg(bang, ...) abort
                 execute 'setlocal ft=' . l:file_type
             endif
         endif
+
+        " Trigger HgCmdPost because things might have changed
+        silent execute 'doautocmd <nomodeline> User HgCmdPost'
     else
         " Interactive execution
-        let l:hg_command = call(l:repo.GetCommand, a:000, l:repo)
-        call lawrencium#trace("Running interactive Mercurial command: " . l:hg_command)
-        execute '!' . l:hg_command
-    endif
+        let l:hg_args = ['--repository', lawrencium#stripslash(l:repo.root_dir)] + a:000
 
-    " Trigger HgCmdPost because things might have changed
-    silent execute 'doautocmd <nomodeline> User HgCmdPost'
+        if has('clientserver') && !empty(v:servername) && exists(':terminal')
+            let l:clientserver_opt = ''
+            if exists('v:argv')
+                let l:cs_idx = index(v:argv, '--clientserver')
+                if l:cs_idx != -1 && len(v:argv) > l:cs_idx + 1
+                    let l:clientserver_opt = ' --clientserver ' . v:argv[l:cs_idx + 1]
+                endif
+            endif
+
+            let l:hgeditor = v:progpath . l:clientserver_opt . ' --servername ' . v:servername . ' --not-a-term --remote-wait'
+            let l:old_hgeditor = exists('$HGEDITOR') ? $HGEDITOR : v:null
+            let $HGEDITOR = l:hgeditor
+
+            if exists('*term_start')
+                call term_start([g:lawrencium_hg_executable] + l:hg_args, {
+                            \ 'cwd': l:repo.root_dir,
+                            \ 'env': {'HGEDITOR': l:hgeditor},
+                            \ 'exit_cb': {j, s -> execute("silent! doautocmd <nomodeline> User HgCmdPost", "")}
+                            \ })
+            else
+                " Fallback for older Vim with terminal but no term_start
+                let l:hg_command = g:lawrencium_hg_executable . ' ' . join(map(copy(l:hg_args), 'shellescape(v:val)'), ' ')
+                execute 'horizontal terminal ' . l:hg_command
+            endif
+
+            if l:old_hgeditor is v:null
+                unlet $HGEDITOR
+            else
+                let $HGEDITOR = l:old_hgeditor
+            endif
+        else
+            let l:hg_command = g:lawrencium_hg_executable . ' ' . join(map(copy(l:hg_args), 'shellescape(v:val)'), ' ')
+            call lawrencium#trace("Running interactive Mercurial command: " . l:hg_command)
+            execute '!' . l:hg_command
+
+            " Trigger HgCmdPost because things might have changed
+            silent execute 'doautocmd <nomodeline> User HgCmdPost'
+        endif
+    endif
 
     if g:lawrencium_auto_cd
       execute 'cd! -'
